@@ -10,6 +10,7 @@ namespace MonsterMonitor.Services
         private readonly SsConfigService _ssConfig;
         private ProcessMonitorService _processMonitor;
         private SshTunnelService _sshTunnel;
+        private IAuthMonitor _authMonitor;
 
         public AppController(LogService log, PowerManagementService power)
         {
@@ -25,10 +26,12 @@ namespace MonsterMonitor.Services
             _power.PreventSleep();
             _processMonitor = new ProcessMonitorService(_log);
             _sshTunnel = new SshTunnelService(_log);
+            _authMonitor = new AuthMonitor(settings);
 
             _ssConfig.EnsureConfig(settings);
             _processMonitor.Start(settings.SsProcessPath, settings.SsArguments);
             _sshTunnel.Start(settings);
+            _ = _authMonitor.StartMonitor();
 
             _log.Info("Сервисы приложения запущены.");
         }
@@ -37,6 +40,9 @@ namespace MonsterMonitor.Services
         {
             _sshTunnel?.Dispose();
             _sshTunnel = null;
+
+            _authMonitor?.StopMonitor();
+            _authMonitor = null;
 
             _processMonitor?.Dispose();
             _processMonitor = null;

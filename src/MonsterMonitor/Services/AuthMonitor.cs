@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using MonsterMonitor.Models;
@@ -20,6 +21,8 @@ namespace MonsterMonitor.Services
         static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 
         private readonly AppSettings _settings;
+        private CancellationTokenSource _monitorCancellation;
+        private Task _monitorTask;
 
         public AuthMonitor(AppSettings settings)
         {
@@ -36,12 +39,39 @@ namespace MonsterMonitor.Services
 
         public async Task StartMonitor()
         {
-            _ = Task.Run(async () => await CheckProcess());
+            StopMonitor();
+            _monitorCancellation = new CancellationTokenSource();
+            _monitorTask = Task.Run(async () => await CheckProcess(_monitorCancellation.Token));
+            await Task.CompletedTask;
         }
 
-        private async Task CheckProcess()
+        public void StopMonitor()
         {
-            while (true)
+            if (_monitorCancellation == null)
+            {
+                return;
+            }
+
+            _monitorCancellation.Cancel();
+            try
+            {
+                _monitorTask?.Wait(TimeSpan.FromSeconds(1));
+            }
+            catch
+            {
+                // Ignore shutdown errors.
+            }
+            finally
+            {
+                _monitorCancellation.Dispose();
+                _monitorCancellation = null;
+                _monitorTask = null;
+            }
+        }
+
+        private async Task CheckProcess(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
             {
                 try
                 {
@@ -70,7 +100,14 @@ namespace MonsterMonitor.Services
                     MessageBox.Show(ex.Message + ex.StackTrace);
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(3));
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
             }
         }
     }
@@ -78,5 +115,6 @@ namespace MonsterMonitor.Services
     public interface IAuthMonitor
     {
         Task StartMonitor();
+        void StopMonitor();
     }
 }
