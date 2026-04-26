@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
+using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
@@ -116,15 +117,51 @@ namespace MonsterMonitor.Services
             }
         }
 
-        private static Version GetCurrentVersion()
+        private Version GetCurrentVersion()
         {
-            Version version;
-            if (!Version.TryParse(Application.ProductVersion, out version))
+            var fileVersion = TryParseVersion(FileVersionInfo.GetVersionInfo(Application.ExecutablePath).ProductVersion);
+            if (fileVersion != null)
             {
-                version = new Version(1, 0, 0, 0);
+                return fileVersion;
             }
 
-            return version;
+            var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version;
+            if (assemblyVersion != null)
+            {
+                return assemblyVersion;
+            }
+
+            var productVersion = TryParseVersion(Application.ProductVersion);
+            if (productVersion != null)
+            {
+                return productVersion;
+            }
+
+            _log.Warn("Не удалось определить текущую версию приложения, использую 1.0.0.");
+            return new Version(1, 0, 0, 0);
+        }
+
+        private static Version TryParseVersion(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var value = raw.Trim();
+            var plusIndex = value.IndexOf('+');
+            if (plusIndex > 0)
+            {
+                value = value.Substring(0, plusIndex);
+            }
+
+            if (value.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+            {
+                value = value.Substring(1);
+            }
+
+            Version version;
+            return Version.TryParse(value, out version) ? version : null;
         }
 
         private static Version ParseVersion(string rawVersion)
