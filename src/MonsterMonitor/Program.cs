@@ -1,8 +1,8 @@
 using System;
 using System.Windows.Forms;
-using SshTunnelMonitor.UI;
+using MonsterMonitor.UI;
 
-namespace SshTunnelMonitor
+namespace MonsterMonitor
 {
     internal static class Program
     {

@@ -1,10 +1,10 @@
-using SshTunnelMonitor.Models;
-using SshTunnelMonitor.Services;
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using MonsterMonitor.Models;
+using MonsterMonitor.Services;
 
-namespace SshTunnelMonitor.UI
+namespace MonsterMonitor.UI
 {
     public sealed class MainForm : Form
     {
@@ -21,7 +21,7 @@ namespace SshTunnelMonitor.UI
 
         public MainForm()
         {
-            Text = "Monster Monitor";
+            Text = string.Format("Monster Monitor v{0}", Application.ProductVersion);
             Width = 980;
             Height = 620;
             StartPosition = FormStartPosition.CenterScreen;

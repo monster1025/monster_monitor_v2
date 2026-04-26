@@ -9,39 +9,52 @@ set informationalversion=%1
 if [%2] NEQ [] SET fileversion=%2
 if [%3] NEQ [] SET informationalversion=%3
 
-echo Setting assembly version information
+echo Setting version in *.csproj files
+set "script=%TEMP%\setversion-csproj.ps1"
+(
+echo param^(
+echo   [string]$Version,
+echo   [string]$FileVersion,
+echo   [string]$InformationalVersion
+echo ^)
+echo $ErrorActionPreference = "Stop"
+echo $projects = Get-ChildItem -Path ^(Get-Location^) -Filter *.csproj -Recurse
+echo foreach ^($project in $projects^) ^{
+echo   Write-Host "^> $($project.FullName)"
+echo   [xml]$xml = Get-Content -Path $project.FullName
+echo   $propertyGroup = $xml.Project.PropertyGroup ^| Select-Object -First 1
+echo   if ^(-not $propertyGroup^) ^{
+echo     $propertyGroup = $xml.CreateElement^("PropertyGroup"^)
+echo     [void]$xml.Project.AppendChild^($propertyGroup^)
+echo   ^}
+echo   function Set-Or-CreateTag ^([xml]$doc, [System.Xml.XmlElement]$group, [string]$tagName, [string]$value^) ^{
+echo     $node = $group.SelectSingleNode^($tagName^)
+echo     if ^($node^) ^{
+echo       $node.InnerText = $value
+echo     ^} else ^{
+echo       $newNode = $doc.CreateElement^($tagName^)
+echo       $newNode.InnerText = $value
+echo       [void]$group.AppendChild^($newNode^)
+echo     ^}
+echo   ^}
+echo   Set-Or-CreateTag $xml $propertyGroup "Version" $Version
+echo   Set-Or-CreateTag $xml $propertyGroup "AssemblyVersion" $Version
+echo   Set-Or-CreateTag $xml $propertyGroup "FileVersion" $FileVersion
+echo   Set-Or-CreateTag $xml $propertyGroup "InformationalVersion" $InformationalVersion
+echo   $xml.Save^($project.FullName^)
+echo ^}
+) > "%script%"
 
-for /F "delims=" %%f in ('dir /s /b Assemblyinfo.cs') do (
-    echo ^> %%f
-
-    pushd %%~dpf
-
-    for /F "usebackq delims=" %%g in ("AssemblyInfo.cs") do (
-        set ln=%%g
-        set skip=0
-
-        if "!ln:AssemblyVersion=!" NEQ "!ln!" set skip=1
-        if "!ln:AssemblyFileVersion=!" NEQ "!ln!" set skip=1
-        if "!ln:AssemblyInformationalVersion=!" NEQ "!ln!" set skip=1
-
-        if !skip!==0 echo !ln! >> AssemblyInfo.cs.versioned
-    )
-
-    echo [assembly: AssemblyVersion^("%version%"^)] >> AssemblyInfo.cs.versioned
-    echo [assembly: AssemblyFileVersion^("%fileversion%"^)] >> AssemblyInfo.cs.versioned
-    echo [assembly: AssemblyInformationalVersion^("%informationalversion%"^)] >> AssemblyInfo.cs.versioned
-
-    copy /y AssemblyInfo.cs AssemblyInfo.cs.orig
-    move /y AssemblyInfo.cs.versioned AssemblyInfo.cs
-
-    popd
-)
-echo Done^^!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%script%" "%version%" "%fileversion%" "%informationalversion%"
+set exit_code=%ERRORLEVEL%
+del /q "%script%" >nul 2>&1
+if not %exit_code%==0 exit /b %exit_code%
+echo Done!
 
 GOTO:EOF
 
 :USAGE
 echo Usage:
 echo.
-echo SetVersion.bat Version [FileVersion] [InformationalVersion]
+echo SetVersion.cmd Version [FileVersion] [InformationalVersion]
 echo.

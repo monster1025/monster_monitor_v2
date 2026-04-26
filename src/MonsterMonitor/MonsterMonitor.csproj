@@ -1,11 +1,15 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net472</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>7.3</LangVersion>
-    <RootNamespace>SshTunnelMonitor</RootNamespace>
+    <RootNamespace>MonsterMonitor</RootNamespace>
     <AssemblyName>MonsterMonitor</AssemblyName>
+    <AssemblyVersion>1.0.3</AssemblyVersion>
+    <Version>1.0.3</Version>
+    <FileVersion>1.0.3</FileVersion>
+    <InformationalVersion>1.0.3</InformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Costura.Fody" Version="6.0.0">

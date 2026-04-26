@@ -2,11 +2,11 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using MonsterMonitor.Models;
 using Renci.SshNet;
 using Renci.SshNet.Common;
-using SshTunnelMonitor.Models;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public sealed class SshTunnelService : IDisposable
     {

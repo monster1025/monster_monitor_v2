@@ -1,7 +1,7 @@
 using System;
-using SshTunnelMonitor.Models;
+using MonsterMonitor.Models;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public sealed class AppController : IDisposable
     {

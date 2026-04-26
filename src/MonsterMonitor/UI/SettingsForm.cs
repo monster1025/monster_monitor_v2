@@ -1,10 +1,9 @@
-using System;
 using System.Drawing;
 using System.Security.Cryptography;
 using System.Windows.Forms;
-using SshTunnelMonitor.Models;
+using MonsterMonitor.Models;
 
-namespace SshTunnelMonitor.UI
+namespace MonsterMonitor.UI
 {
     public sealed class SettingsForm : Form
     {

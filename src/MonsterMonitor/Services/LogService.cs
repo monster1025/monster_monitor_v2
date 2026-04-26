@@ -1,6 +1,6 @@
 using System;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public enum LogLevel
     {

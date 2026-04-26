@@ -1,9 +1,9 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
-using SshTunnelMonitor.Models;
+using MonsterMonitor.Models;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public sealed class SsConfigService
     {

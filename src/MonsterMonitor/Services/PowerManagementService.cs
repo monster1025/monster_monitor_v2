@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public sealed class PowerManagementService
     {

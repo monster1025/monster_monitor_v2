@@ -4,7 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SshTunnelMonitor.Models
+namespace MonsterMonitor.Models
 {
     public sealed class AppSettings
     {
@@ -58,7 +58,7 @@ namespace SshTunnelMonitor.Models
         {
             if (string.IsNullOrWhiteSpace(SystemPasswordProtected))
             {
-                return "STerra";
+                return "";
             }
 
             if (!SystemPasswordProtected.StartsWith(ProtectedPrefix, StringComparison.Ordinal))

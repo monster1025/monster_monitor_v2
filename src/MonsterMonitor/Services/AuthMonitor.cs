@@ -4,9 +4,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using SshTunnelMonitor.Models;
+using MonsterMonitor.Models;
 
-namespace SshTunnelMonitor.Services
+namespace MonsterMonitor.Services
 {
     public class AuthMonitor: IAuthMonitor
     {
@@ -57,8 +57,12 @@ namespace SshTunnelMonitor.Services
                     var activeWindowTitle = GetActiveWindowTitle();
                     if (activeWindowTitle?.Contains("XAuth request") == true)
                     {
-                        SendKeys.SendWait(_settings.GetSystemPassword());
-                        SendKeys.SendWait("{ENTER}");
+                        var password = _settings.GetSystemPassword();
+                        if (!string.IsNullOrEmpty(password))
+                        {
+                            SendKeys.SendWait(password);
+                            SendKeys.SendWait("{ENTER}");
+                        }
                     }
                 }
                 catch (Exception ex)
