@@ -32,7 +32,16 @@ namespace MonsterMonitor.Services
         public void Start(AppSettings settings)
         {
             _settings = settings;
-            Connect();
+            try
+            {
+                Connect();
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Не удалось запустить SSH-туннель с первого раза: " + ex.Message);
+                ReconnectSoon();
+            }
+
             StartMonitor();
         }
 
