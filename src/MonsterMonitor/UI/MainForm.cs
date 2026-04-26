@@ -13,6 +13,7 @@ namespace MonsterMonitor.UI
         private readonly Button _btnSettings = new Button();
         private readonly Button _btnExit = new Button();
         private readonly NotifyIcon _notifyIcon = new NotifyIcon();
+        private readonly Timer _updateTimer = new Timer();
         private readonly Icon _trayIcon;
         private readonly LogService _log = new LogService();
         private readonly PowerManagementService _power = new PowerManagementService();
@@ -20,6 +21,7 @@ namespace MonsterMonitor.UI
         private AppController _controller;
         private AppSettings _settings;
         private bool _allowClose;
+        private bool _isUpdateCheckRunning;
 
         public MainForm()
         {
@@ -43,7 +45,8 @@ namespace MonsterMonitor.UI
             _controller = new AppController(_log, _power);
             _updateService = new GitHubUpdateService(_log);
             RestartServices();
-            _ = RunUpdateCheckAsync();
+            ConfigureUpdateTimer();
+            _ = RunUpdateCheckAsync(true);
         }
 
         private void BuildUi()
@@ -148,6 +151,8 @@ namespace MonsterMonitor.UI
             }
 
             _notifyIcon.Visible = false;
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
             _controller?.Dispose();
             _trayIcon?.Dispose();
         }
@@ -168,11 +173,40 @@ namespace MonsterMonitor.UI
             _console.ScrollToCaret();
         }
 
-        private async Task RunUpdateCheckAsync()
+        private void ConfigureUpdateTimer()
         {
-            // Небольшая задержка, чтобы окно и лог уже успели инициализироваться.
-            await Task.Delay(1000);
-            await _updateService.CheckAndPrepareUpdateAsync();
+            _updateTimer.Interval = (int)TimeSpan.FromHours(1).TotalMilliseconds;
+            _updateTimer.Tick += async (_, __) => await RunUpdateCheckAsync(false);
+            _updateTimer.Start();
+            _log.Info("Автопроверка обновлений включена (раз в 1 час).");
+        }
+
+        private async Task RunUpdateCheckAsync(bool isInitialCheck)
+        {
+            if (_isUpdateCheckRunning)
+            {
+                return;
+            }
+
+            try
+            {
+                _isUpdateCheckRunning = true;
+                if (isInitialCheck)
+                {
+                    // Небольшая задержка, чтобы окно и лог уже успели инициализироваться.
+                    await Task.Delay(1000);
+                }
+                else
+                {
+                    _log.Info("Плановая проверка обновлений...");
+                }
+
+                await _updateService.CheckAndPrepareUpdateAsync();
+            }
+            finally
+            {
+                _isUpdateCheckRunning = false;
+            }
         }
 
         private static Color GetColor(LogLevel level)
