@@ -28,6 +28,7 @@ namespace MonsterMonitor.Services
 
             var config = "users admin:CL:" + password + "\r\n" +
                          "auth strong\r\n" +
+                         "maxconn 2000\r\n" +
                          $"socks -i127.0.0.1 -p{port}";
 
             var configPath = GetConfigPath();
