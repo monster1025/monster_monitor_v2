@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using MonsterMonitor.Models;
 using MonsterMonitor.Services;
@@ -15,6 +16,7 @@ namespace MonsterMonitor.UI
         private readonly Icon _trayIcon;
         private readonly LogService _log = new LogService();
         private readonly PowerManagementService _power = new PowerManagementService();
+        private GitHubUpdateService _updateService;
         private AppController _controller;
         private AppSettings _settings;
         private bool _allowClose;
@@ -39,7 +41,9 @@ namespace MonsterMonitor.UI
 
             _settings = AppSettings.Load();
             _controller = new AppController(_log, _power);
+            _updateService = new GitHubUpdateService(_log);
             RestartServices();
+            _ = RunUpdateCheckAsync();
         }
 
         private void BuildUi()
@@ -162,6 +166,13 @@ namespace MonsterMonitor.UI
             _console.AppendText($"[{entry.Timestamp:HH:mm:ss}] [{entry.Level}] {entry.Message}{Environment.NewLine}");
             _console.SelectionColor = _console.ForeColor;
             _console.ScrollToCaret();
+        }
+
+        private async Task RunUpdateCheckAsync()
+        {
+            // Небольшая задержка, чтобы окно и лог уже успели инициализироваться.
+            await Task.Delay(1000);
+            await _updateService.CheckAndPrepareUpdateAsync();
         }
 
         private static Color GetColor(LogLevel level)
