@@ -10,6 +10,7 @@ using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using MonsterMonitor.Models;
 
 namespace MonsterMonitor.Services
 {
@@ -20,10 +21,12 @@ namespace MonsterMonitor.Services
         private const string GithubToken = "";
 
         private readonly LogService _log;
+        private readonly AppSettings _settings;
 
-        public GitHubUpdateService(LogService log)
+        public GitHubUpdateService(LogService log, AppSettings settings)
         {
             _log = log;
+            _settings = settings;
         }
 
         public async Task CheckAndPrepareUpdateAsync()
@@ -159,7 +162,7 @@ namespace MonsterMonitor.Services
             {
                 var request = CreateGithubRequest(url, "application/vnd.github+json");
                 using (var response = (HttpWebResponse)await request.GetResponseAsync())
-            using (var stream = response.GetResponseStream())
+                using (var stream = response.GetResponseStream())
                 {
                     if (stream == null)
                     {
@@ -266,7 +269,7 @@ namespace MonsterMonitor.Services
             return asset.DownloadUrl ?? string.Empty;
         }
 
-        private static HttpWebRequest CreateGithubRequest(string url, string accept)
+        private HttpWebRequest CreateGithubRequest(string url, string accept)
         {
             var request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "GET";
@@ -277,8 +280,24 @@ namespace MonsterMonitor.Services
             {
                 request.Headers.Add("Authorization", "Bearer " + GithubToken);
             }
+            if (!string.IsNullOrWhiteSpace(_settings.Proxy))
+            {
+                request.Proxy = GetProxy(_settings.Proxy);
+            }
 
             return request;
+        }
+
+        private WebProxy GetProxy(string proxyUri)
+        {
+            var proxy = new WebProxy(new Uri(proxyUri), false);
+            var cc = new CredentialCache();
+            cc.Add(
+                new Uri(proxyUri),
+                "Negotiate", // if we don't set it to "Kerberos" we get error 407 with ---> the function requested is not supported.
+                CredentialCache.DefaultNetworkCredentials);
+            proxy.Credentials = cc;
+            return proxy;
         }
 
         private static string BuildUpdaterScript(string appDir, string extractDir, string exePath)

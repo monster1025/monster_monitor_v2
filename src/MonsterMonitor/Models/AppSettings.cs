@@ -21,6 +21,7 @@ namespace MonsterMonitor.Models
         public int LocalPort { get; set; } = 7829;
         public int MaxPingFailures { get; set; } = 3;
         public int ReconnectTimeoutSec { get; set; } = 45;
+        public string Proxy { get; set; } = string.Empty;
         public string SsProcessPath { get; set; } = Path.Combine("App_Data", "ss", "ss.exe");
         public string SsArguments { get; set; } = string.Empty;
 
@@ -163,6 +164,7 @@ namespace MonsterMonitor.Models
             result.LocalPort = GetInt(map, nameof(LocalPort), result.LocalPort);
             result.MaxPingFailures = GetInt(map, nameof(MaxPingFailures), result.MaxPingFailures);
             result.ReconnectTimeoutSec = GetInt(map, nameof(ReconnectTimeoutSec), result.ReconnectTimeoutSec);
+            result.Proxy = Get(map, nameof(Proxy), result.Proxy);
             result.SsProcessPath = Get(map, nameof(SsProcessPath), result.SsProcessPath);
             result.SsArguments = Get(map, nameof(SsArguments), result.SsArguments);
 
@@ -191,6 +193,7 @@ namespace MonsterMonitor.Models
                 $"{nameof(LocalPort)}={LocalPort}",
                 $"{nameof(MaxPingFailures)}={MaxPingFailures}",
                 $"{nameof(ReconnectTimeoutSec)}={ReconnectTimeoutSec}",
+                $"{nameof(Proxy)}={Proxy}",
                 $"{nameof(SsProcessPath)}={SsProcessPath}",
                 $"{nameof(SsArguments)}={SsArguments}"
             };

@@ -17,6 +17,7 @@ namespace MonsterMonitor.UI
         private readonly NumericUpDown _numLocalPort = new NumericUpDown();
         private readonly NumericUpDown _numMaxFailures = new NumericUpDown();
         private readonly NumericUpDown _numReconnectTimeout = new NumericUpDown();
+        private readonly TextBox _txtProxy = new TextBox();
         private readonly TextBox _txtSsPath = new TextBox();
         private readonly TextBox _txtSsArgs = new TextBox();
         private readonly TextBox _txtSystemPassword = new TextBox();
@@ -30,7 +31,7 @@ namespace MonsterMonitor.UI
             _settings = settings;
             Text = "Настройки";
             Width = 560;
-            Height = 520;
+            Height = 560;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -47,7 +48,7 @@ namespace MonsterMonitor.UI
                 Dock = DockStyle.Fill,
                 Padding = new Padding(10),
                 ColumnCount = 2,
-                RowCount = 14
+                RowCount = 15
             };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44f));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56f));
@@ -65,10 +66,11 @@ namespace MonsterMonitor.UI
             AddRow(panel, "Локальный порт:", _numLocalPort, 6);
             AddRow(panel, "Макс. потерь:", _numMaxFailures, 7);
             AddRow(panel, "Таймаут reconnect (сек):", _numReconnectTimeout, 8);
-            AddRow(panel, "Путь к ss:", _txtSsPath, 9);
-            AddRow(panel, "Аргументы ss:", _txtSsArgs, 10);
-            BuildSystemPasswordRow(panel, 11);
-            BuildThreeProxyPasswordRow(panel, 12);
+            AddRow(panel, "Прокси (http://host:port):", _txtProxy, 9);
+            AddRow(panel, "Путь к ss:", _txtSsPath, 10);
+            AddRow(panel, "Аргументы ss:", _txtSsArgs, 11);
+            BuildSystemPasswordRow(panel, 12);
+            BuildThreeProxyPasswordRow(panel, 13);
 
             foreach (var num in new[] { _numSshPort, _numRemotePort, _numLocalPort })
             {
@@ -93,7 +95,7 @@ namespace MonsterMonitor.UI
 
             buttonsPanel.Controls.Add(btnSave);
             buttonsPanel.Controls.Add(btnCancel);
-            panel.Controls.Add(buttonsPanel, 0, 13);
+            panel.Controls.Add(buttonsPanel, 0, 14);
             panel.SetColumnSpan(buttonsPanel, 2);
         }
 
@@ -200,6 +202,7 @@ namespace MonsterMonitor.UI
             _numLocalPort.Value = _settings.LocalPort;
             _numMaxFailures.Value = _settings.MaxPingFailures;
             _numReconnectTimeout.Value = _settings.ReconnectTimeoutSec;
+            _txtProxy.Text = _settings.Proxy;
             _txtSsPath.Text = _settings.SsProcessPath;
             _txtSsArgs.Text = _settings.SsArguments;
             _txtSystemPassword.Text = _settings.GetSystemPassword();
@@ -223,6 +226,7 @@ namespace MonsterMonitor.UI
             _settings.LocalPort = (int)_numLocalPort.Value;
             _settings.MaxPingFailures = (int)_numMaxFailures.Value;
             _settings.ReconnectTimeoutSec = (int)_numReconnectTimeout.Value;
+            _settings.Proxy = _txtProxy.Text.Trim();
             _settings.SsProcessPath = string.IsNullOrWhiteSpace(_txtSsPath.Text)
                 ? System.IO.Path.Combine("App_Data", "ss", "ss.exe")
                 : _txtSsPath.Text.Trim();

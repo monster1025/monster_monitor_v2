@@ -43,7 +43,7 @@ namespace MonsterMonitor.UI
 
             _settings = AppSettings.Load();
             _controller = new AppController(_log, _power);
-            _updateService = new GitHubUpdateService(_log);
+            _updateService = new GitHubUpdateService(_log, _settings);
             RestartServices();
             ConfigureUpdateTimer();
             _ = RunUpdateCheckAsync(true);
