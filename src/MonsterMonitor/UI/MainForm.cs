@@ -135,6 +135,33 @@ namespace MonsterMonitor.UI
             Activate();
         }
 
+        public void RestoreAndActivateFromExternalSignal()
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(RestoreAndActivateFromExternalSignal));
+                return;
+            }
+
+            _log.Info("Получен сигнал активации от второго инстанса.");
+
+            if (!Visible)
+            {
+                Show();
+            }
+
+            if (WindowState == FormWindowState.Minimized)
+            {
+                WindowState = FormWindowState.Normal;
+            }
+
+            // Небольшой трюк для надежного вывода окна на передний план.
+            TopMost = true;
+            Activate();
+            TopMost = false;
+            Focus();
+        }
+
         private void ExitApplication()
         {
             _allowClose = true;
