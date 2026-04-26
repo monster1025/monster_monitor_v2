@@ -66,8 +66,8 @@ namespace MonsterMonitor.Services
                     return;
                 }
 
-                var tempRoot = Path.Combine(Path.GetTempPath(), "MonsterMonitorUpdate");
-                var packageDir = Path.Combine(tempRoot, latestVersion.ToString());
+                var appDir = AppDomain.CurrentDomain.BaseDirectory;
+                var packageDir = Path.Combine(appDir, "update", latestVersion.ToString());
                 var packageZip = Path.Combine(packageDir, "update.zip");
                 var extractDir = Path.Combine(packageDir, "extracted");
                 Directory.CreateDirectory(packageDir);
@@ -83,7 +83,6 @@ namespace MonsterMonitor.Services
                 ZipFile.ExtractToDirectory(packageZip, extractDir);
                 _log.Info("Архив обновления распакован.");
 
-                var appDir = AppDomain.CurrentDomain.BaseDirectory;
                 var exePath = Application.ExecutablePath;
                 var updaterBat = Path.Combine(packageDir, "apply_update.bat");
                 File.WriteAllText(updaterBat, BuildUpdaterScript(appDir, extractDir, exePath), Encoding.ASCII);
