@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using MonsterMonitor.Models;
@@ -9,6 +10,9 @@ namespace MonsterMonitor.UI
 {
     public sealed class MainForm : Form
     {
+        private const int EmGetFirstVisibleLine = 0x00CE;
+        private const int EmLineScroll = 0x00B6;
+
         private readonly RichTextBox _console = new RichTextBox();
         private readonly Button _btnSettings = new Button();
         private readonly Button _btnExit = new Button();
@@ -192,13 +196,48 @@ namespace MonsterMonitor.UI
                 return;
             }
 
+            var wasNearBottom = IsConsoleNearBottom();
+            var firstVisibleLineBeforeAppend = GetFirstVisibleLine(_console);
+
             _console.SelectionStart = _console.TextLength;
             _console.SelectionLength = 0;
             _console.SelectionColor = GetColor(entry.Level);
             _console.AppendText($"[{entry.Timestamp:HH:mm:ss}] [{entry.Level}] {entry.Message}{Environment.NewLine}");
             _console.SelectionColor = _console.ForeColor;
-            _console.ScrollToCaret();
+
+            if (wasNearBottom)
+            {
+                _console.ScrollToCaret();
+                return;
+            }
+
+            var firstVisibleLineAfterAppend = GetFirstVisibleLine(_console);
+            var linesToRestore = firstVisibleLineBeforeAppend - firstVisibleLineAfterAppend;
+            if (linesToRestore != 0)
+            {
+                SendMessage(_console.Handle, EmLineScroll, IntPtr.Zero, (IntPtr)linesToRestore);
+            }
         }
+
+        private bool IsConsoleNearBottom()
+        {
+            if (_console.TextLength == 0)
+            {
+                return true;
+            }
+
+            var bottomLeftPoint = new Point(1, Math.Max(0, _console.ClientSize.Height - 1));
+            var lastVisibleCharIndex = _console.GetCharIndexFromPosition(bottomLeftPoint);
+            return lastVisibleCharIndex >= _console.TextLength - 2;
+        }
+
+        private static int GetFirstVisibleLine(RichTextBox richTextBox)
+        {
+            return SendMessage(richTextBox.Handle, EmGetFirstVisibleLine, IntPtr.Zero, IntPtr.Zero).ToInt32();
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         private void ConfigureUpdateTimer()
         {
