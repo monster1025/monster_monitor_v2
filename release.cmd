@@ -23,6 +23,7 @@ git tag -m "Version v%VERSION%: %~1" -a v%VERSION%
 git push origin v%VERSION%
 
 git push --tags
+git push
 GOTO End
 pause
 
