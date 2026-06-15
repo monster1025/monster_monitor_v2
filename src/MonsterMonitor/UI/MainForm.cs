@@ -1,10 +1,11 @@
+using MonsterMonitor.Models;
+using MonsterMonitor.Services;
 using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using MonsterMonitor.Models;
-using MonsterMonitor.Services;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace MonsterMonitor.UI
 {
@@ -29,7 +30,7 @@ namespace MonsterMonitor.UI
 
         public MainForm()
         {
-            Text = string.Format("Monster Monitor v{0}", Application.ProductVersion);
+            Text = string.Format("Monster Monitor v{0}", System.Windows.Forms.Application.ProductVersion);
             Width = 980;
             Height = 620;
             StartPosition = FormStartPosition.CenterScreen;
@@ -190,11 +191,18 @@ namespace MonsterMonitor.UI
 
         private void AppendLog(LogEntry entry)
         {
+            if (_console.Text.Length > 100000)
+            {
+                _console.ResetText();
+            }
+            System.Windows.Forms.Application.DoEvents();
+
             if (InvokeRequired)
             {
                 BeginInvoke(new Action<LogEntry>(AppendLog), entry);
                 return;
             }
+            System.Windows.Forms.Application.DoEvents();
 
             var wasNearBottom = IsConsoleNearBottom();
             var firstVisibleLineBeforeAppend = GetFirstVisibleLine(_console);
@@ -204,12 +212,14 @@ namespace MonsterMonitor.UI
             _console.SelectionColor = GetColor(entry.Level);
             _console.AppendText($"[{entry.Timestamp:HH:mm:ss}] [{entry.Level}] {entry.Message}{Environment.NewLine}");
             _console.SelectionColor = _console.ForeColor;
+            System.Windows.Forms.Application.DoEvents();
 
             if (wasNearBottom)
             {
                 _console.ScrollToCaret();
                 return;
             }
+            System.Windows.Forms.Application.DoEvents();
 
             var firstVisibleLineAfterAppend = GetFirstVisibleLine(_console);
             var linesToRestore = firstVisibleLineBeforeAppend - firstVisibleLineAfterAppend;
@@ -217,6 +227,7 @@ namespace MonsterMonitor.UI
             {
                 SendMessage(_console.Handle, EmLineScroll, IntPtr.Zero, (IntPtr)linesToRestore);
             }
+            System.Windows.Forms.Application.DoEvents();
         }
 
         private bool IsConsoleNearBottom()
