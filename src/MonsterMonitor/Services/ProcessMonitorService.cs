@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 
 namespace MonsterMonitor.Services
@@ -28,6 +29,10 @@ namespace MonsterMonitor.Services
                 _path = path;
                 _arguments = arguments ?? string.Empty;
                 _stopping = false;
+                // Подчищаем ss.exe, оставшийся от предыдущей (аварийно закрытой) копии
+                // приложения — иначе его занятый порт не даст новому 3proxy стартовать,
+                // и watchdog будет бесконечно перезапускать мгновенно умирающий процесс.
+                KillOrphanedProcesses();
                 EnsureStarted();
                 _watchdogTimer.Change(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
             }
@@ -58,6 +63,23 @@ namespace MonsterMonitor.Services
                     EnableRaisingEvents = true
                 };
                 _process.Start();
+
+                // ss (3proxy) при занятом порту завершается почти мгновенно.
+                // Если процесс умер сразу после старта — не рапортуем «запущен» и не
+                // крутим бесконечный цикл рестартов, а один раз пишем понятную причину.
+                if (_process.WaitForExit(500))
+                {
+                    var exitCode = SafeGetExitCode(_process);
+                    var message = "Процесс ss завершился сразу после запуска (код " + exitCode +
+                                  "). Вероятно, локальный порт уже занят другим процессом ss.";
+                    if (_lastStartError != message)
+                    {
+                        _lastStartError = message;
+                        _log.Error(message);
+                    }
+                    return;
+                }
+
                 _lastStartError = null;
                 _log.Info("Процесс ss запущен.");
             }
@@ -131,6 +153,114 @@ namespace MonsterMonitor.Services
             catch (InvalidOperationException)
             {
                 return false;
+            }
+        }
+
+        // Завершает «осиротевшие» экземпляры ss.exe, оставшиеся от прошлой копии
+        // приложения. Сопоставление по полному пути к исполняемому файлу, чтобы не
+        // задеть посторонние одноимённые процессы.
+        private void KillOrphanedProcesses()
+        {
+            string targetName;
+            string targetFullPath;
+            try
+            {
+                targetName = Path.GetFileNameWithoutExtension(_path);
+                targetFullPath = Path.GetFullPath(_path);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(targetName))
+            {
+                return;
+            }
+
+            var ownPid = _process != null && IsProcessRunning(_process) ? SafeGetId(_process) : -1;
+
+            Process[] candidates;
+            try
+            {
+                candidates = Process.GetProcessesByName(targetName);
+            }
+            catch (Exception ex)
+            {
+                _log.Warn("Не удалось перечислить процессы ss: " + ex.Message);
+                return;
+            }
+
+            foreach (var proc in candidates)
+            {
+                try
+                {
+                    if (proc.Id == ownPid)
+                    {
+                        continue;
+                    }
+
+                    // Убиваем только процессы из нашего каталога ss.exe.
+                    if (!PathsEqual(SafeGetProcessPath(proc), targetFullPath))
+                    {
+                        continue;
+                    }
+
+                    proc.Kill();
+                    proc.WaitForExit(3000);
+                    _log.Warn("Завершен осиротевший процесс ss (PID " + proc.Id + ") от предыдущего запуска.");
+                }
+                catch (Exception ex)
+                {
+                    _log.Warn("Не удалось завершить осиротевший ss: " + ex.Message);
+                }
+                finally
+                {
+                    proc.Dispose();
+                }
+            }
+        }
+
+        private static bool PathsEqual(string a, string b)
+        {
+            return !string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) &&
+                   string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string SafeGetProcessPath(Process process)
+        {
+            try
+            {
+                return process.MainModule?.FileName;
+            }
+            catch
+            {
+                // Доступ к MainModule может быть запрещён (другой пользователь/разрядность).
+                return null;
+            }
+        }
+
+        private static int SafeGetId(Process process)
+        {
+            try
+            {
+                return process.Id;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static int SafeGetExitCode(Process process)
+        {
+            try
+            {
+                return process.ExitCode;
+            }
+            catch
+            {
+                return -1;
             }
         }
 
