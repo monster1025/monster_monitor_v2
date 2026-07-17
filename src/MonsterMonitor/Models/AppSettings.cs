@@ -170,8 +170,9 @@ namespace MonsterMonitor.Models
 
             if (string.IsNullOrWhiteSpace(result.SystemPasswordProtected))
             {
+                // Значение по умолчанию применяется только в памяти.
+                // Раньше здесь вызывался Save() — лишний дисковый I/O на каждом чтении настроек.
                 result.SetSystemPassword("STerra");
-                result.Save();
             }
 
             return result;

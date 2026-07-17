@@ -13,6 +13,7 @@ namespace MonsterMonitor.Services
         private string _path;
         private string _arguments;
         private bool _stopping;
+        private string _lastStartError;
 
         public ProcessMonitorService(LogService log)
         {
@@ -43,7 +44,6 @@ namespace MonsterMonitor.Services
             {
                 if (_process != null)
                 {
-                    _process.Exited -= ProcessOnExited;
                     _process.Dispose();
                 }
                 _process = new Process
@@ -57,27 +57,19 @@ namespace MonsterMonitor.Services
                     },
                     EnableRaisingEvents = true
                 };
-                //_process.Exited += ProcessOnExited;
                 _process.Start();
+                _lastStartError = null;
                 _log.Info("Процесс ss запущен.");
             }
             catch (Exception ex)
             {
-                _log.Error("Ошибка запуска ss: " + ex.Message);
-            }
-        }
-
-        private void ProcessOnExited(object sender, EventArgs e)
-        {
-            lock (_sync)
-            {
-                if (_stopping)
+                // Watchdog тикает каждые 10с; при неверном пути не флудим лог
+                // одинаковой ошибкой — пишем её только при изменении.
+                if (_lastStartError != ex.Message)
                 {
-                    return;
+                    _lastStartError = ex.Message;
+                    _log.Error("Ошибка запуска ss: " + ex.Message);
                 }
-
-                _log.Warn("Процесс ss завершился, запускаю заново.");
-                EnsureStarted();
             }
         }
 
@@ -118,7 +110,6 @@ namespace MonsterMonitor.Services
                 {
                     if (_process != null)
                     {
-                        _process.Exited -= ProcessOnExited;
                         _process.Dispose();
                     }
                     _process = null;

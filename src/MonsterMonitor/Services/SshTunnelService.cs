@@ -12,16 +12,21 @@ namespace MonsterMonitor.Services
     {
         private readonly LogService _log;
         private readonly object _sync = new object();
+
+        // Сериализует реконнект: перекрывающиеся запросы (из событий и из монитора)
+        // отбрасываются, а не выполняются параллельно и не копятся в очередь.
+        private readonly SemaphoreSlim _reconnectGate = new SemaphoreSlim(1, 1);
+
         private SshClient _client;
         private ForwardedPortRemote _forwardedPort;
         private SshCommand _heartbeatCommand;
         private CancellationTokenSource _heartbeatReadTokenSource;
         private Task _heartbeatReadTask;
         private CancellationTokenSource _monitorTokenSource;
+        private Task _monitorTask;
         private AppSettings _settings;
-        private bool _disposed;
-        private bool _reconnectInProgress;
-        private DateTime _lastHeartbeatUtc = DateTime.MinValue;
+        private volatile bool _disposed;
+        private long _lastHeartbeatTicks;
         private bool _remoteIsWindows;
 
         public SshTunnelService(LogService log)
@@ -55,6 +60,10 @@ namespace MonsterMonitor.Services
                 var authMethod = new PasswordAuthenticationMethod(_settings.SshUsername, password);
                 var connectionInfo = new ConnectionInfo(_settings.SshHost, _settings.SshPort, _settings.SshUsername, authMethod);
 
+                // Ограничиваем блокирующий Connect(), чтобы он не висел бесконечно.
+                var timeoutSec = Math.Min(60, Math.Max(5, _settings.ReconnectTimeoutSec));
+                connectionInfo.Timeout = TimeSpan.FromSeconds(timeoutSec);
+
                 _client = new SshClient(connectionInfo);
                 _client.ErrorOccurred += ClientOnErrorOccurred;
                 _client.Connect();
@@ -85,7 +94,7 @@ namespace MonsterMonitor.Services
         private void StartMonitor()
         {
             _monitorTokenSource = new CancellationTokenSource();
-            Task.Run(() => MonitorLoop(_monitorTokenSource.Token));
+            _monitorTask = Task.Run(() => MonitorLoop(_monitorTokenSource.Token));
         }
 
         private async Task MonitorLoop(CancellationToken token)
@@ -94,18 +103,23 @@ namespace MonsterMonitor.Services
             {
                 try
                 {
-                    var silenceThresholdSec = Math.Max(
-                        5,
-                        _settings.MaxPingFailures);
-
-                    var lastHeartbeat = _lastHeartbeatUtc;
-                    var isHeartbeatAlive = lastHeartbeat != DateTime.MinValue &&
-                                           (DateTime.UtcNow - lastHeartbeat).TotalSeconds <= silenceThresholdSec;
-
-                    if (!IsConnected() || !isHeartbeatAlive)
+                    // Пропускаем проверку, пока идёт реконнект — иначе получаем лог-флуд
+                    // и лишние пробуждения, дёргающие уже занятый шлюз реконнекта.
+                    if (_reconnectGate.CurrentCount > 0)
                     {
-                        _log.Warn("Нет живого вывода heartbeat-команды на удаленном сервере. Переподключаю SSH.");
-                        await Reconnect().ConfigureAwait(false);
+                        // heartbeat присылается раз в секунду; MaxPingFailures трактуем
+                        // как допустимое число пропущенных ответов (≈ секунд тишины).
+                        var silenceThresholdSec = Math.Max(10, _settings.MaxPingFailures);
+
+                        var lastHeartbeatTicks = Interlocked.Read(ref _lastHeartbeatTicks);
+                        var isHeartbeatAlive = lastHeartbeatTicks != 0 &&
+                                               (DateTime.UtcNow - new DateTime(lastHeartbeatTicks, DateTimeKind.Utc)).TotalSeconds <= silenceThresholdSec;
+
+                        if (!IsConnected() || !isHeartbeatAlive)
+                        {
+                            _log.Warn("Нет живого вывода heartbeat-команды на удаленном сервере. Переподключаю SSH.");
+                            await Reconnect().ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -115,9 +129,9 @@ namespace MonsterMonitor.Services
 
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(3), token).ConfigureAwait(false);
                 }
-                catch (TaskCanceledException)
+                catch (OperationCanceledException)
                 {
                     break;
                 }
@@ -136,39 +150,51 @@ namespace MonsterMonitor.Services
         {
             Task.Run(async () =>
             {
-                await Task.Delay(1000).ConfigureAwait(false);
-                await Reconnect().ConfigureAwait(false);
+                try
+                {
+                    await Task.Delay(1000).ConfigureAwait(false);
+                    await Reconnect().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // fire-and-forget: гарантированно не роняем процесс необработанным исключением.
+                    _log.Warn("Ошибка отложенного переподключения SSH: " + ex.Message);
+                }
             });
         }
 
         private async Task Reconnect()
         {
-            if (_reconnectInProgress || _disposed)
+            if (_disposed)
             {
                 return;
             }
 
-            _reconnectInProgress = true;
+            // Неблокирующая попытка захватить шлюз: если реконнект уже идёт — выходим,
+            // не создавая второй параллельный Connect() и не накапливая очередь.
+            if (!await _reconnectGate.WaitAsync(0).ConfigureAwait(false))
+            {
+                return;
+            }
+
             try
             {
-                var timeout = Math.Min(60, Math.Max(5, _settings.ReconnectTimeoutSec));
+                if (_disposed)
+                {
+                    return;
+                }
+
                 _log.Warn("Перезапуск SSH-соединения...");
 
-                var reconnectTask = Task.Run(() =>
+                // Connect() ограничен ConnectionInfo.Timeout, поэтому не зависнет навсегда.
+                // Ждём завершения задачи (без брошенного WhenAny) — нет орфанных SshClient.
+                await Task.Run(() =>
                 {
                     DisconnectCore();
                     Connect();
-                });
+                }).ConfigureAwait(false);
 
-                var completed = await Task.WhenAny(reconnectTask, Task.Delay(TimeSpan.FromSeconds(timeout))).ConfigureAwait(false);
-                if (completed != reconnectTask)
-                {
-                    _log.Error("Переподключение превысило таймаут " + timeout + "с.");
-                }
-                else
-                {
-                    _log.Info("SSH-соединение восстановлено.");
-                }
+                _log.Info("SSH-соединение восстановлено.");
             }
             catch (Exception ex)
             {
@@ -176,46 +202,51 @@ namespace MonsterMonitor.Services
             }
             finally
             {
-                _reconnectInProgress = false;
+                _reconnectGate.Release();
             }
         }
 
         private void DisconnectCore()
         {
-            StopRemoteHeartbeatNoLock();
+            lock (_sync)
+            {
+                StopRemoteHeartbeatNoLock();
 
-            try
-            {
-                if (_forwardedPort != null)
+                try
                 {
-                    if (_forwardedPort.IsStarted)
+                    if (_forwardedPort != null)
                     {
-                        _forwardedPort.Stop();
+                        if (_forwardedPort.IsStarted)
+                        {
+                            _forwardedPort.Stop();
+                        }
+                        _forwardedPort.Exception -= ForwardedPortOnException;
+                        _forwardedPort.Dispose();
+                        _forwardedPort = null;
                     }
-                    _forwardedPort.Dispose();
-                    _forwardedPort = null;
                 }
-            }
-            catch
-            {
-                // Ignore errors on shutdown.
-            }
+                catch
+                {
+                    // Ignore errors on shutdown.
+                }
 
-            try
-            {
-                if (_client != null)
+                try
                 {
-                    if (_client.IsConnected)
+                    if (_client != null)
                     {
-                        _client.Disconnect();
+                        _client.ErrorOccurred -= ClientOnErrorOccurred;
+                        if (_client.IsConnected)
+                        {
+                            _client.Disconnect();
+                        }
+                        _client.Dispose();
+                        _client = null;
                     }
-                    _client.Dispose();
-                    _client = null;
                 }
-            }
-            catch
-            {
-                // Ignore errors on shutdown.
+                catch
+                {
+                    // Ignore errors on shutdown.
+                }
             }
         }
 
@@ -235,7 +266,7 @@ namespace MonsterMonitor.Services
 
             _heartbeatCommand = _client.CreateCommand(heartbeatCommand);
             _heartbeatReadTokenSource = new CancellationTokenSource();
-            _lastHeartbeatUtc = DateTime.UtcNow;
+            Interlocked.Exchange(ref _lastHeartbeatTicks, DateTime.UtcNow.Ticks);
             _heartbeatCommand.BeginExecute();
 
             _heartbeatReadTask = Task.Run(() =>
@@ -287,7 +318,7 @@ namespace MonsterMonitor.Services
                             continue;
                         }
 
-                        _lastHeartbeatUtc = DateTime.UtcNow;
+                        Interlocked.Exchange(ref _lastHeartbeatTicks, DateTime.UtcNow.Ticks);
                         _log.Debug("HB: " + line);
                     }
                 }
@@ -305,9 +336,11 @@ namespace MonsterMonitor.Services
         {
             try
             {
-                var command = _client.CreateCommand("cmd /c ver");
-                var output = command.Execute() ?? string.Empty;
-                return output.IndexOf("windows", StringComparison.OrdinalIgnoreCase) >= 0;
+                using (var command = _client.CreateCommand("cmd /c ver"))
+                {
+                    var output = command.Execute() ?? string.Empty;
+                    return output.IndexOf("windows", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
             }
             catch
             {
@@ -317,19 +350,35 @@ namespace MonsterMonitor.Services
 
         public void Stop()
         {
-            _monitorTokenSource?.Cancel();
-            _monitorTokenSource?.Dispose();
+            var monitorTokenSource = _monitorTokenSource;
+            var monitorTask = _monitorTask;
             _monitorTokenSource = null;
-            lock (_sync)
+            _monitorTask = null;
+
+            try
             {
-                DisconnectCore();
+                monitorTokenSource?.Cancel();
+                // Дожидаемся завершения цикла монитора до освобождения CTS,
+                // иначе Task.Delay(token) может словить ObjectDisposedException.
+                monitorTask?.Wait(TimeSpan.FromSeconds(2));
             }
+            catch
+            {
+                // Ignore shutdown errors.
+            }
+            finally
+            {
+                monitorTokenSource?.Dispose();
+            }
+
+            DisconnectCore();
         }
 
         public void Dispose()
         {
             _disposed = true;
             Stop();
+            _reconnectGate.Dispose();
         }
     }
 }

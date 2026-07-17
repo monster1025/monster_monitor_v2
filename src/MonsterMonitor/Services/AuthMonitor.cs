@@ -1,5 +1,4 @@
-﻿using System;
-using System.Diagnostics;
+using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -9,32 +8,81 @@ using MonsterMonitor.Models;
 
 namespace MonsterMonitor.Services
 {
-    public class AuthMonitor: IAuthMonitor
+    public class AuthMonitor : IAuthMonitor
     {
+        private const string AuthWindowMarker = "XAuth request";
+
         [DllImport("user32.dll")]
-        static extern IntPtr GetForegroundWindow();
+        private static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
         [DllImport("user32.dll")]
-        static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+        private static extern int GetWindowTextLength(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         private readonly AppSettings _settings;
+        private readonly LogService _log;
         private CancellationTokenSource _monitorCancellation;
         private Task _monitorTask;
 
-        public AuthMonitor(AppSettings settings)
+        public AuthMonitor(AppSettings settings, LogService log)
         {
             _settings = settings;
+            _log = log;
         }
 
-        private string GetActiveWindowTitle()
+        private static string GetWindowTitle(IntPtr handle)
         {
-            const int nChars = 256;
-            var buff = new StringBuilder(nChars);
-            var handle = GetForegroundWindow();
-            return GetWindowText(handle, buff, nChars) > 0 ? buff.ToString() : null;
+            var length = GetWindowTextLength(handle);
+            if (length <= 0)
+            {
+                return null;
+            }
+
+            var buff = new StringBuilder(length + 1);
+            return GetWindowText(handle, buff, buff.Capacity) > 0 ? buff.ToString() : null;
+        }
+
+        private static string GetActiveWindowTitle()
+        {
+            return GetWindowTitle(GetForegroundWindow());
+        }
+
+        // Ищет окно авторизации через перечисление окон (без перебора всех процессов
+        // и без утечки хендлов Process). Возвращает первое видимое подходящее окно.
+        private static IntPtr FindAuthWindow()
+        {
+            var found = IntPtr.Zero;
+            EnumWindows((hWnd, lParam) =>
+            {
+                if (!IsWindowVisible(hWnd))
+                {
+                    return true;
+                }
+
+                var title = GetWindowTitle(hWnd);
+                if (title != null && title.IndexOf(AuthWindowMarker, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    found = hWnd;
+                    return false; // прекращаем перечисление
+                }
+
+                return true;
+            }, IntPtr.Zero);
+
+            return found;
         }
 
         public async Task StartMonitor()
@@ -75,29 +123,28 @@ namespace MonsterMonitor.Services
             {
                 try
                 {
-                    Process[] processlist = Process.GetProcesses();
-                    foreach (Process process in processlist)
+                    var authWindow = FindAuthWindow();
+                    if (authWindow != IntPtr.Zero)
                     {
-                        if (!string.IsNullOrEmpty(process.MainWindowTitle) && process.MainWindowTitle.Contains("XAuth request"))
-                        {
-                            SetForegroundWindow(process.MainWindowHandle);
-                        }
-                    }
+                        SetForegroundWindow(authWindow);
 
-                    var activeWindowTitle = GetActiveWindowTitle();
-                    if (activeWindowTitle?.Contains("XAuth request") == true)
-                    {
-                        var password = _settings.GetSystemPassword();
-                        if (!string.IsNullOrEmpty(password))
+                        var activeWindowTitle = GetActiveWindowTitle();
+                        if (activeWindowTitle?.IndexOf(AuthWindowMarker, StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            SendKeys.SendWait(password);
-                            SendKeys.SendWait("{ENTER}");
+                            var password = _settings.GetSystemPassword();
+                            if (!string.IsNullOrEmpty(password))
+                            {
+                                SendKeys.SendWait(password);
+                                SendKeys.SendWait("{ENTER}");
+                            }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(ex.Message + ex.StackTrace);
+                    // Раньше здесь был MessageBox.Show из фонового потока — при повторяющемся
+                    // исключении он заваливал рабочий стол окнами. Теперь просто пишем в лог.
+                    _log.Warn("Ошибка мониторинга авторизации: " + ex.Message);
                 }
 
                 try

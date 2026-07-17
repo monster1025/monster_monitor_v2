@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using MonsterMonitor.Models;
 
 namespace MonsterMonitor.Services
@@ -26,12 +27,14 @@ namespace MonsterMonitor.Services
             _power.PreventSleep();
             _processMonitor = new ProcessMonitorService(_log);
             _sshTunnel = new SshTunnelService(_log);
-            _authMonitor = new AuthMonitor(settings);
+            _authMonitor = new AuthMonitor(settings, _log);
 
             _ssConfig.EnsureConfig(settings);
             _processMonitor.Start(settings.SsProcessPath, settings.SsArguments);
             _sshTunnel.Start(settings);
-            _ = _authMonitor.StartMonitor();
+            _authMonitor.StartMonitor().ContinueWith(
+                t => _log.Error("Ошибка запуска монитора авторизации: " + t.Exception?.GetBaseException().Message),
+                TaskContinuationOptions.OnlyOnFaulted);
 
             _log.Info("Сервисы приложения запущены.");
         }

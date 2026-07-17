@@ -1,11 +1,11 @@
 using MonsterMonitor.Models;
 using MonsterMonitor.Services;
 using System;
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace MonsterMonitor.UI
 {
@@ -13,12 +13,19 @@ namespace MonsterMonitor.UI
     {
         private const int EmGetFirstVisibleLine = 0x00CE;
         private const int EmLineScroll = 0x00B6;
+        private const int WmSetRedraw = 0x000B;
+
+        // Ограничение размера буфера консоли, чтобы текст не рос бесконечно.
+        private const int ConsoleMaxChars = 100000;
+        private const int ConsoleTrimToChars = 80000;
 
         private readonly RichTextBox _console = new RichTextBox();
         private readonly Button _btnSettings = new Button();
         private readonly Button _btnExit = new Button();
         private readonly NotifyIcon _notifyIcon = new NotifyIcon();
         private readonly Timer _updateTimer = new Timer();
+        private readonly Timer _logFlushTimer = new Timer();
+        private readonly ConcurrentQueue<LogEntry> _pendingLogs = new ConcurrentQueue<LogEntry>();
         private readonly Icon _trayIcon;
         private readonly LogService _log = new LogService();
         private readonly PowerManagementService _power = new PowerManagementService();
@@ -30,11 +37,12 @@ namespace MonsterMonitor.UI
 
         public MainForm()
         {
-            Text = string.Format("Monster Monitor v{0}", System.Windows.Forms.Application.ProductVersion);
+            Text = string.Format("Monster Monitor v{0}", Application.ProductVersion);
             Width = 980;
             Height = 620;
             StartPosition = FormStartPosition.CenterScreen;
             _trayIcon = LoadTrayIcon();
+            Icon = _trayIcon;
 
             BuildUi();
             BindEvents();
@@ -43,12 +51,11 @@ namespace MonsterMonitor.UI
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
-            this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
 
             _settings = AppSettings.Load();
             _controller = new AppController(_log, _power);
             _updateService = new GitHubUpdateService(_log, _settings);
+            ConfigureLogFlushTimer();
             RestartServices();
             ConfigureUpdateTimer();
             _ = RunUpdateCheckAsync(true);
@@ -182,44 +189,66 @@ namespace MonsterMonitor.UI
                 return;
             }
 
-            _notifyIcon.Visible = false;
+            // Останавливаем таймеры заранее, чтобы не было тиков во время разрушения формы.
+            _logFlushTimer.Stop();
             _updateTimer.Stop();
-            _updateTimer.Dispose();
-            _controller?.Dispose();
-            _trayIcon?.Dispose();
+            _notifyIcon.Visible = false;
         }
 
+        private void ConfigureLogFlushTimer()
+        {
+            // Логи копятся в очереди и выводятся пачкой ~10 раз в секунду,
+            // а не по одной строке за событие — это снимает нагрузку на CPU и убирает мерцание.
+            _logFlushTimer.Interval = 100;
+            _logFlushTimer.Tick += (_, __) => FlushLogs();
+            _logFlushTimer.Start();
+        }
+
+        // Вызывается из фоновых потоков — только кладём запись в очередь, без обращения к UI.
         private void AppendLog(LogEntry entry)
         {
-            if (_console.Text.Length > 100000)
-            {
-                _console.ResetText();
-            }
-            System.Windows.Forms.Application.DoEvents();
+            _pendingLogs.Enqueue(entry);
+        }
 
-            if (InvokeRequired)
+        // Выполняется всегда в UI-потоке (таймер WinForms).
+        private void FlushLogs()
+        {
+            if (_pendingLogs.IsEmpty || !_console.IsHandleCreated)
             {
-                BeginInvoke(new Action<LogEntry>(AppendLog), entry);
                 return;
             }
-            System.Windows.Forms.Application.DoEvents();
 
             var wasNearBottom = IsConsoleNearBottom();
             var firstVisibleLineBeforeAppend = GetFirstVisibleLine(_console);
 
-            _console.SelectionStart = _console.TextLength;
-            _console.SelectionLength = 0;
-            _console.SelectionColor = GetColor(entry.Level);
-            _console.AppendText($"[{entry.Timestamp:HH:mm:ss}] [{entry.Level}] {entry.Message}{Environment.NewLine}");
-            _console.SelectionColor = _console.ForeColor;
-            System.Windows.Forms.Application.DoEvents();
+            // Замораживаем отрисовку на время пакетного добавления — одна перерисовка вместо десятков.
+            SendMessage(_console.Handle, WmSetRedraw, IntPtr.Zero, IntPtr.Zero);
+            try
+            {
+                while (_pendingLogs.TryDequeue(out var entry))
+                {
+                    _console.SelectionStart = _console.TextLength;
+                    _console.SelectionLength = 0;
+                    _console.SelectionColor = GetColor(entry.Level);
+                    _console.AppendText($"[{entry.Timestamp:HH:mm:ss}] [{entry.Level}] {entry.Message}{Environment.NewLine}");
+                    _console.SelectionColor = _console.ForeColor;
+                }
+
+                TrimConsole();
+            }
+            finally
+            {
+                SendMessage(_console.Handle, WmSetRedraw, (IntPtr)1, IntPtr.Zero);
+                _console.Invalidate();
+            }
 
             if (wasNearBottom)
             {
+                _console.SelectionStart = _console.TextLength;
+                _console.SelectionLength = 0;
                 _console.ScrollToCaret();
                 return;
             }
-            System.Windows.Forms.Application.DoEvents();
 
             var firstVisibleLineAfterAppend = GetFirstVisibleLine(_console);
             var linesToRestore = firstVisibleLineBeforeAppend - firstVisibleLineAfterAppend;
@@ -227,7 +256,28 @@ namespace MonsterMonitor.UI
             {
                 SendMessage(_console.Handle, EmLineScroll, IntPtr.Zero, (IntPtr)linesToRestore);
             }
-            System.Windows.Forms.Application.DoEvents();
+        }
+
+        // Обрезаем старые строки, а не сбрасываем весь буфер — плавно и без рывка скролла.
+        private void TrimConsole()
+        {
+            if (_console.TextLength <= ConsoleMaxChars)
+            {
+                return;
+            }
+
+            var removeUpTo = _console.TextLength - ConsoleTrimToChars;
+            var line = _console.GetLineFromCharIndex(removeUpTo);
+            var cut = _console.GetFirstCharIndexFromLine(line + 1);
+            if (cut <= 0)
+            {
+                cut = removeUpTo;
+            }
+
+            _console.Select(0, cut);
+            _console.SelectedText = string.Empty;
+            _console.SelectionStart = _console.TextLength;
+            _console.SelectionLength = 0;
         }
 
         private bool IsConsoleNearBottom()
@@ -280,6 +330,11 @@ namespace MonsterMonitor.UI
 
                 await _updateService.CheckAndPrepareUpdateAsync();
             }
+            catch (Exception ex)
+            {
+                // async void (Timer.Tick) — необработанное исключение уронило бы приложение.
+                _log.Error("Ошибка проверки обновлений: " + ex.Message);
+            }
             finally
             {
                 _isUpdateCheckRunning = false;
@@ -307,18 +362,25 @@ namespace MonsterMonitor.UI
             return ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
         }
 
-        private void InitializeComponent()
+        protected override void Dispose(bool disposing)
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainForm));
-            this.SuspendLayout();
-            // 
-            // MainForm
-            // 
-            this.ClientSize = new System.Drawing.Size(284, 261);
-            this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
-            this.Name = "MainForm";
-            this.ResumeLayout(false);
+            if (disposing)
+            {
+                _log.LogReceived -= AppendLog;
 
+                _logFlushTimer.Stop();
+                _logFlushTimer.Dispose();
+                _updateTimer.Stop();
+                _updateTimer.Dispose();
+
+                _controller?.Dispose();
+
+                _notifyIcon.Visible = false;
+                _notifyIcon.Dispose();
+                _trayIcon?.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

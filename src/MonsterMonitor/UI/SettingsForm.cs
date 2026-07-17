@@ -194,19 +194,36 @@ namespace MonsterMonitor.UI
         private void LoadValues()
         {
             _txtHost.Text = _settings.SshHost;
-            _numSshPort.Value = _settings.SshPort;
+            _numSshPort.Value = Clamp(_numSshPort, _settings.SshPort);
             _txtUser.Text = _settings.SshUsername;
             _txtPassword.Text = _settings.GetPassword();
             _chkSavePassword.Checked = _settings.SavePassword;
-            _numRemotePort.Value = _settings.RemotePort;
-            _numLocalPort.Value = _settings.LocalPort;
-            _numMaxFailures.Value = _settings.MaxPingFailures;
-            _numReconnectTimeout.Value = _settings.ReconnectTimeoutSec;
+            _numRemotePort.Value = Clamp(_numRemotePort, _settings.RemotePort);
+            _numLocalPort.Value = Clamp(_numLocalPort, _settings.LocalPort);
+            _numMaxFailures.Value = Clamp(_numMaxFailures, _settings.MaxPingFailures);
+            _numReconnectTimeout.Value = Clamp(_numReconnectTimeout, _settings.ReconnectTimeoutSec);
             _txtProxy.Text = _settings.Proxy;
             _txtSsPath.Text = _settings.SsProcessPath;
             _txtSsArgs.Text = _settings.SsArguments;
             _txtSystemPassword.Text = _settings.GetSystemPassword();
             _txtThreeProxyPassword.Text = _settings.GetThreeProxyPassword();
+        }
+
+        // Приводит значение из настроек к допустимому диапазону контрола,
+        // иначе NumericUpDown.Value бросит ArgumentOutOfRangeException и окно не откроется.
+        private static decimal Clamp(NumericUpDown control, int value)
+        {
+            if (value < control.Minimum)
+            {
+                return control.Minimum;
+            }
+
+            if (value > control.Maximum)
+            {
+                return control.Maximum;
+            }
+
+            return value;
         }
 
         private void SaveAndClose()
