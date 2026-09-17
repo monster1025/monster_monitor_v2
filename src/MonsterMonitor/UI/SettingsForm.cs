@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Security.Cryptography;
 using System.Windows.Forms;
@@ -64,7 +65,7 @@ namespace MonsterMonitor.UI
             AddRow(panel, string.Empty, _chkSavePassword, 4);
             AddRow(panel, "Удаленный порт:", _numRemotePort, 5);
             AddRow(panel, "Локальный порт:", _numLocalPort, 6);
-            AddRow(panel, "Макс. потерь:", _numMaxFailures, 7);
+            AddRow(panel, "Молчание heartbeat (сек):", _numMaxFailures, 7);
             AddRow(panel, "Таймаут reconnect (сек):", _numReconnectTimeout, 8);
             AddRow(panel, "Прокси (http://host:port):", _txtProxy, 9);
             AddRow(panel, "Путь к ss:", _txtSsPath, 10);
@@ -78,8 +79,8 @@ namespace MonsterMonitor.UI
                 num.Maximum = 65535;
             }
 
-            _numMaxFailures.Minimum = 1;
-            _numMaxFailures.Maximum = 10;
+            _numMaxFailures.Minimum = 10;
+            _numMaxFailures.Maximum = 600;
             _numReconnectTimeout.Minimum = 5;
             _numReconnectTimeout.Maximum = 60;
 
@@ -200,7 +201,7 @@ namespace MonsterMonitor.UI
             _chkSavePassword.Checked = _settings.SavePassword;
             _numRemotePort.Value = _settings.RemotePort;
             _numLocalPort.Value = _settings.LocalPort;
-            _numMaxFailures.Value = _settings.MaxPingFailures;
+            _numMaxFailures.Value = Math.Min(600, Math.Max(10, _settings.HeartbeatSilenceSec));
             _numReconnectTimeout.Value = _settings.ReconnectTimeoutSec;
             _txtProxy.Text = _settings.Proxy;
             _txtSsPath.Text = _settings.SsProcessPath;
@@ -224,7 +225,7 @@ namespace MonsterMonitor.UI
             _settings.SetPassword(_txtPassword.Text);
             _settings.RemotePort = (int)_numRemotePort.Value;
             _settings.LocalPort = (int)_numLocalPort.Value;
-            _settings.MaxPingFailures = (int)_numMaxFailures.Value;
+            _settings.HeartbeatSilenceSec = (int)_numMaxFailures.Value;
             _settings.ReconnectTimeoutSec = (int)_numReconnectTimeout.Value;
             _settings.Proxy = _txtProxy.Text.Trim();
             _settings.SsProcessPath = string.IsNullOrWhiteSpace(_txtSsPath.Text)
