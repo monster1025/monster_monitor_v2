@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using MonsterMonitor.Models;
@@ -14,6 +16,13 @@ namespace MonsterMonitor.Services
         private readonly object _sync = new object();
         private SshClient _client;
         private ForwardedPortRemote _forwardedPort;
+        // Локальный проброс на серверный RemotePort: даёт замкнутый e2e-маршрут
+        // local -> SSH -> сервер:RemotePort -> обратный проброс -> наш LocalPort.
+        private ForwardedPortLocal _probePort;
+        private int _probeLocalPort;
+        private int _probeFailures;
+        private DateTime _lastProbeUtc = DateTime.MinValue;
+        private DateTime _lastGoodProbeUtc = DateTime.MinValue;
         private SshCommand _heartbeatCommand;
         private CancellationTokenSource _heartbeatReadTokenSource;
         private Task _heartbeatReadTask;
@@ -63,7 +72,11 @@ namespace MonsterMonitor.Services
                 _forwardedPort.Exception += ForwardedPortOnException;
                 _client.AddForwardedPort(_forwardedPort);
                 _forwardedPort.Start();
+                StartProbePortNoLock();
                 StartRemoteHeartbeatNoLock();
+                _probeFailures = 0;
+                _lastProbeUtc = DateTime.UtcNow;
+                _lastGoodProbeUtc = DateTime.UtcNow;
 
                 _log.Info(
                     $"SSH подключен. Туннель remote:{_settings.RemotePort} -> local:{_settings.LocalPort}");
@@ -94,18 +107,61 @@ namespace MonsterMonitor.Services
             {
                 try
                 {
-                    var silenceThresholdSec = Math.Max(
-                        5,
-                        _settings.MaxPingFailures);
-
-                    var lastHeartbeat = _lastHeartbeatUtc;
-                    var isHeartbeatAlive = lastHeartbeat != DateTime.MinValue &&
-                                           (DateTime.UtcNow - lastHeartbeat).TotalSeconds <= silenceThresholdSec;
-
-                    if (!IsConnected() || !isHeartbeatAlive)
+                    if (!IsConnected())
                     {
-                        _log.Warn("Нет живого вывода heartbeat-команды на удаленном сервере. Переподключаю SSH.");
+                        _log.Warn("SSH-сессия не подключена. Переподключаю.");
                         await Reconnect().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var now = DateTime.UtcNow;
+                        var silenceThresholdSec = Math.Max(5, _settings.HeartbeatSilenceSec);
+                        var probeIntervalSec = Math.Max(5, _settings.ProbeIntervalSec);
+
+                        var lastHeartbeat = _lastHeartbeatUtc;
+                        var heartbeatSilentSec = lastHeartbeat == DateTime.MinValue
+                            ? double.MaxValue
+                            : (now - lastHeartbeat).TotalSeconds;
+                        var heartbeatSuspicious = heartbeatSilentSec > silenceThresholdSec;
+
+                        // Heartbeat живёт в том же SSH-соединении, что и полезный трафик,
+                        // поэтому под большой выгрузкой он опаздывает - это НЕ повод рвать
+                        // туннель. Решение принимает только e2e-проверка проброса.
+                        var needProbe = heartbeatSuspicious ||
+                                        (now - _lastProbeUtc).TotalSeconds >= probeIntervalSec;
+
+                        if (needProbe)
+                        {
+                            _lastProbeUtc = now;
+                            var ok = await ProbeForwardAsync().ConfigureAwait(false);
+                            if (ok)
+                            {
+                                if (_probeFailures > 0)
+                                {
+                                    _log.Info("e2e-проверка проброса снова проходит.");
+                                }
+
+                                _probeFailures = 0;
+                                _lastGoodProbeUtc = DateTime.UtcNow;
+                            }
+                            else
+                            {
+                                _probeFailures++;
+                                _log.Warn($"e2e-проверка проброса не прошла ({_probeFailures} подряд).");
+                            }
+                        }
+
+                        if (heartbeatSuspicious && _probeFailures == 0)
+                        {
+                            _log.Debug(
+                                $"Heartbeat молчит {heartbeatSilentSec:F0}с, но проброс работает - вероятно идёт передача. Не переподключаю.");
+                        }
+
+                        if (_probeFailures >= Math.Max(1, _settings.ProbeFailuresBeforeReconnect))
+                        {
+                            _log.Warn("Проброс портов не пропускает трафик. Переподключаю SSH.");
+                            await Reconnect().ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -183,6 +239,7 @@ namespace MonsterMonitor.Services
         private void DisconnectCore()
         {
             StopRemoteHeartbeatNoLock();
+            StopProbePortNoLock();
 
             try
             {
@@ -216,6 +273,113 @@ namespace MonsterMonitor.Services
             catch
             {
                 // Ignore errors on shutdown.
+            }
+        }
+
+        /// <summary>
+        /// Поднимает локальный проброс на серверный RemotePort. Подключение к нему
+        /// проходит весь маршрут целиком: наш процесс -> SSH -> слушатель обратного
+        /// проброса на сервере -> SSH обратно -> наш LocalPort (ss.exe).
+        /// Успешный TCP-connect означает, что проброс реально пропускает трафик,
+        /// а не просто "сессия жива".
+        /// </summary>
+        private void StartProbePortNoLock()
+        {
+            StopProbePortNoLock();
+
+            try
+            {
+                _probeLocalPort = FindFreeLocalPort();
+                _probePort = new ForwardedPortLocal(
+                    "127.0.0.1",
+                    (uint)_probeLocalPort,
+                    "127.0.0.1",
+                    (uint)_settings.RemotePort);
+                _client.AddForwardedPort(_probePort);
+                _probePort.Start();
+                _log.Info($"e2e-проверка проброса включена (127.0.0.1:{_probeLocalPort}).");
+            }
+            catch (Exception ex)
+            {
+                _probePort = null;
+                _log.Warn("Не удалось поднять порт e2e-проверки: " + ex.Message);
+            }
+        }
+
+        private void StopProbePortNoLock()
+        {
+            try
+            {
+                if (_probePort != null)
+                {
+                    if (_probePort.IsStarted)
+                    {
+                        _probePort.Stop();
+                    }
+
+                    _probePort.Dispose();
+                    _probePort = null;
+                }
+            }
+            catch
+            {
+                // Ignore errors on shutdown.
+            }
+        }
+
+        private static int FindFreeLocalPort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            try
+            {
+                return ((IPEndPoint)listener.LocalEndpoint).Port;
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
+
+        private async Task<bool> ProbeForwardAsync()
+        {
+            ForwardedPortLocal probe;
+            int port;
+            lock (_sync)
+            {
+                probe = _probePort;
+                port = _probeLocalPort;
+            }
+
+            if (probe == null || !probe.IsStarted || port <= 0)
+            {
+                // Порт проверки поднять не удалось - не выдумываем отказ проброса,
+                // иначе будем рвать рабочий туннель из-за собственной диагностики.
+                return true;
+            }
+
+            var timeoutMs = Math.Max(1, _settings.ProbeTimeoutSec) * 1000;
+
+            try
+            {
+                using (var tcp = new TcpClient())
+                {
+                    var connectTask = tcp.ConnectAsync(IPAddress.Loopback, port);
+                    var completed = await Task.WhenAny(connectTask, Task.Delay(timeoutMs)).ConfigureAwait(false);
+                    if (completed != connectTask)
+                    {
+                        _log.Debug("e2e-проверка: таймаут подключения через проброс.");
+                        return false;
+                    }
+
+                    await connectTask.ConfigureAwait(false);
+                    return tcp.Connected;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("e2e-проверка: " + ex.Message);
+                return false;
             }
         }
 

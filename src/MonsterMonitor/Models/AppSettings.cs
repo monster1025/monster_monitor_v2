@@ -19,8 +19,22 @@ namespace MonsterMonitor.Models
         public bool SavePassword { get; set; } = false;
         public int RemotePort { get; set; } = 3328;
         public int LocalPort { get; set; } = 7829;
+        // Устарело: раньше использовалось как порог молчания heartbeat в секундах,
+        // но код брал Math.Max(5, MaxPingFailures), поэтому значение <5 ничего не меняло.
+        // Оставлено для совместимости со старыми settings.ini, см. HeartbeatSilenceSec.
         public int MaxPingFailures { get; set; } = 3;
         public int ReconnectTimeoutSec { get; set; } = 45;
+
+        // Сколько секунд молчания heartbeat считать подозрительным. Само по себе
+        // молчание больше НЕ рвёт соединение - оно лишь повод сделать e2e-проверку.
+        // Большая выгрузка легко забивает канал на десятки секунд.
+        public int HeartbeatSilenceSec { get; set; } = 60;
+
+        // e2e-проверка проброса: раз в сколько секунд, таймаут и сколько подряд
+        // неудач требуется, чтобы переподключаться.
+        public int ProbeIntervalSec { get; set; } = 30;
+        public int ProbeTimeoutSec { get; set; } = 10;
+        public int ProbeFailuresBeforeReconnect { get; set; } = 2;
         public string Proxy { get; set; } = string.Empty;
         public string SsProcessPath { get; set; } = Path.Combine("App_Data", "ss", "ss.exe");
         public string SsArguments { get; set; } = string.Empty;
@@ -164,6 +178,10 @@ namespace MonsterMonitor.Models
             result.LocalPort = GetInt(map, nameof(LocalPort), result.LocalPort);
             result.MaxPingFailures = GetInt(map, nameof(MaxPingFailures), result.MaxPingFailures);
             result.ReconnectTimeoutSec = GetInt(map, nameof(ReconnectTimeoutSec), result.ReconnectTimeoutSec);
+            result.HeartbeatSilenceSec = GetInt(map, nameof(HeartbeatSilenceSec), result.HeartbeatSilenceSec);
+            result.ProbeIntervalSec = GetInt(map, nameof(ProbeIntervalSec), result.ProbeIntervalSec);
+            result.ProbeTimeoutSec = GetInt(map, nameof(ProbeTimeoutSec), result.ProbeTimeoutSec);
+            result.ProbeFailuresBeforeReconnect = GetInt(map, nameof(ProbeFailuresBeforeReconnect), result.ProbeFailuresBeforeReconnect);
             result.Proxy = Get(map, nameof(Proxy), result.Proxy);
             result.SsProcessPath = Get(map, nameof(SsProcessPath), result.SsProcessPath);
             result.SsArguments = Get(map, nameof(SsArguments), result.SsArguments);
@@ -193,6 +211,10 @@ namespace MonsterMonitor.Models
                 $"{nameof(LocalPort)}={LocalPort}",
                 $"{nameof(MaxPingFailures)}={MaxPingFailures}",
                 $"{nameof(ReconnectTimeoutSec)}={ReconnectTimeoutSec}",
+                $"{nameof(HeartbeatSilenceSec)}={HeartbeatSilenceSec}",
+                $"{nameof(ProbeIntervalSec)}={ProbeIntervalSec}",
+                $"{nameof(ProbeTimeoutSec)}={ProbeTimeoutSec}",
+                $"{nameof(ProbeFailuresBeforeReconnect)}={ProbeFailuresBeforeReconnect}",
                 $"{nameof(Proxy)}={Proxy}",
                 $"{nameof(SsProcessPath)}={SsProcessPath}",
                 $"{nameof(SsArguments)}={SsArguments}"
